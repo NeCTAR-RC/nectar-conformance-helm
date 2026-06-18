@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ncw.fullname" . }}-reports
+  labels:
+    {{- include "ncw.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.reports.pvc.accessModes | nindent 4 }}
+  {{- with .Values.reports.pvc.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.reports.pvc.size | quote }}

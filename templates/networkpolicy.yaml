@@ -1,0 +1,46 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ncw.fullname" . }}-refresh-egress
+  labels:
+    {{- include "ncw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: refresh
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ncw.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: refresh
+  policyTypes:
+    - Egress
+  egress:
+    {{- range .Values.networkPolicy.puppetdb.cidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        {{- range $.Values.networkPolicy.puppetdb.ports }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+    {{- if .Values.checks.git.enabled }}
+    # Egress to the git host so the git-sync init container can clone the checks repo.
+    {{- range .Values.networkPolicy.checksGit.cidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        {{- range $.Values.networkPolicy.checksGit.ports }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+    {{- end }}
+    # Allow DNS resolution.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}

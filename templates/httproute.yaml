@@ -1,0 +1,24 @@
+{{- if .Values.httproute.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "ncw.fullname" . }}
+  labels:
+    {{- include "ncw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  parentRefs:
+    {{- toYaml .Values.httproute.parentRefs | nindent 4 }}
+  {{- with .Values.httproute.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ include "ncw.fullname" . }}
+          port: {{ .Values.service.port }}
+{{- end }}

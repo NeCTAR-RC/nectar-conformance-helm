@@ -1,0 +1,66 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "ncw.fullname" . }}-refresh
+  labels:
+    {{- include "ncw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: refresh
+spec:
+  schedule: {{ .Values.refreshSchedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "ncw.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: refresh
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          {{- if .Values.checks.git.enabled }}
+          initContainers:
+            {{- include "ncw.gitsync" (dict "ctx" . "name" "git-sync-init" "oneTime" true) | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: refresh
+              image: {{ include "ncw.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              command: ["nectar-conformance-refresh", "--reports-dir", {{ .Values.reportsDir | quote }}]
+              env:
+                - name: NECTAR_CONFORMANCE_TIER
+                  value: {{ .Values.tier | quote }}
+                {{- if .Values.checks.git.enabled }}
+                - name: NECTAR_CONFORMANCE_CHECKS_DIR
+                  value: {{ include "ncw.checksDir" . | quote }}
+                {{- end }}
+              resources:
+                {{- toYaml .Values.resources.refresh | nindent 16 }}
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/nectar-conformance
+                  readOnly: true
+                - name: reports
+                  mountPath: {{ .Values.reportsDir }}
+                - name: tmp
+                  mountPath: /tmp
+                {{- if .Values.checks.git.enabled }}
+                - name: checks
+                  mountPath: {{ .Values.checks.mountPath }}
+                  readOnly: true
+                {{- end }}
+          volumes:
+            - name: config
+              configMap:
+                name: {{ include "ncw.fullname" . }}-config
+            - name: reports
+              persistentVolumeClaim:
+                claimName: {{ include "ncw.fullname" . }}-reports
+            - name: tmp
+              emptyDir: {}
+            {{- include "ncw.checksVolumes" . | nindent 12 }}

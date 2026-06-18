@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ncw.fullname" . }}
+  labels:
+    {{- include "ncw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ncw.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        {{- include "ncw.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.checks.git.enabled }}
+      initContainers:
+        {{- include "ncw.gitsync" (dict "ctx" . "name" "git-sync-init" "oneTime" true) | nindent 8 }}
+      {{- end }}
+      containers:
+        {{- if .Values.checks.git.enabled }}
+        # Sidecar: keep the checks checkout current so the dashboard's version/changes views
+        # update without a pod restart. The init container above does the first clone.
+        {{- include "ncw.gitsync" (dict "ctx" . "name" "git-sync" "oneTime" false) | nindent 8 }}
+        {{- end }}
+        - name: web
+          image: {{ include "ncw.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command: ["nectar-conformance-web", "--host", "0.0.0.0", "--port", "8080"]
+          env:
+            - name: NECTAR_CONFORMANCE_TIER
+              value: {{ .Values.tier | quote }}
+            - name: NECTAR_CONFORMANCE_REPORTS_DIR
+              value: {{ .Values.reportsDir | quote }}
+            {{- if .Values.checks.git.enabled }}
+            - name: NECTAR_CONFORMANCE_CHECKS_DIR
+              value: {{ include "ncw.checksDir" . | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources.web | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nectar-conformance
+              readOnly: true
+            - name: reports
+              mountPath: {{ .Values.reportsDir }}
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.checks.git.enabled }}
+            - name: checks
+              mountPath: {{ .Values.checks.mountPath }}
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ncw.fullname" . }}-config
+        - name: reports
+          persistentVolumeClaim:
+            claimName: {{ include "ncw.fullname" . }}-reports
+        - name: tmp
+          emptyDir: {}
+        {{- include "ncw.checksVolumes" . | nindent 8 }}

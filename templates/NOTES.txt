@@ -1,0 +1,18 @@
+{{ include "ncw.fullname" . }} ({{ .Values.tier }} tier) is installed.
+
+- The refresh CronJob runs "{{ .Values.refreshSchedule }}", evaluating every site found at
+  {{ .Values.puppetdb.baseUrl }} and writing reports to the shared volume.
+- The dashboard is served by the web Deployment.
+
+Check status:
+  kubectl -n {{ .Release.Namespace }} get cronjob,deploy,pvc -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Trigger the first refresh now (instead of waiting for the schedule):
+  kubectl -n {{ .Release.Namespace }} create job --from=cronjob/{{ include "ncw.fullname" . }}-refresh {{ include "ncw.fullname" . }}-refresh-init
+
+{{- if .Values.httproute.enabled }}
+Reach it via the HTTPRoute:
+{{- range .Values.httproute.hostnames }}
+  https://{{ . }}/
+{{- end }}
+{{- end }}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: nectar-conformance
+description: 'Read-only conformance dashboard for Nectar. Deploy one release per tier (prod, test): a CronJob evaluates every site over PuppetDB and writes reports to a shared RWX volume, and a web Deployment serves them.'
+type: application
+version: 0.3.0
+appVersion: 0.3.0

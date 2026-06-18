@@ -1,0 +1,138 @@
+# Defaults shared by both tiers. Override per tier with values-prod.yaml / values-test.yaml.
+
+image:
+  repository: registry.rc.nectar.org.au/nectar/nectar-conformance
+  tag: "" # defaults to the chart appVersion
+  pullPolicy: IfNotPresent
+
+# Which tier this deployment represents. All discovered sites are folded as this tier.
+tier: prod
+
+puppetdb:
+  # The tier's PuppetDB endpoint (plain HTTP, no token). REQUIRED.
+  baseUrl: "http://localhost:8080"
+
+# Site ids this deployment evaluates, as a flat list. The chart nests this under the
+# configured `tier` (above) when it writes config.yaml, so list each site once, e.g.:
+#   sites:
+#     - adelaide
+#     - ardc
+#     - melbourne
+# Leave empty ([]) to evaluate every environment PuppetDB knows about (discovery); a
+# non-empty list restricts evaluation to exactly those sites. The real per-tier lists
+# live in values-prod.yaml / values-test.yaml.
+sites: []
+
+# The conformance check data (definitions + changelog) lives in the
+# nectar-conformance-checks repo, not in the image, so the conformance schedule can change
+# without a new image. git-sync clones it into a shared volume that both pods read: an
+# init container for the CronJob (fresh every run) and a sidecar for the web pod (periodic
+# pull, so the dashboard's version/changes views stay current without a restart).
+checks:
+  # Where the synced checkout is mounted in both pods. The tool reads <mountPath>/current
+  # (git-sync's stable symlink to the working tree).
+  mountPath: /checks
+  git:
+    enabled: true
+    # Clone URL for nectar-conformance-checks. REQUIRED when enabled. Anonymous HTTPS is
+    # simplest; for SSH set secretName below to a Secret holding the deploy key under "ssh".
+    repo: "https://review.rc.nectar.org.au/internal/nectar-conformance-checks"
+    ref: master
+    depth: 1
+    # Web sidecar pull interval (the CronJob init clone ignores this; it runs once).
+    period: 1m
+    maxFailures: 3
+    image: registry.k8s.io/git-sync/git-sync:v4.4.0
+    # Optional Secret with an SSH deploy key (key "ssh"); leave empty for anonymous HTTPS.
+    secretName: ""
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+
+# When the refresh CronJob runs (cluster timezone). Default: hourly.
+refreshSchedule: "0 * * * *"
+
+# Mount point of the shared reports volume, in both pods.
+reportsDir: /var/lib/nectar-conformance
+
+replicas: 1
+
+# Pod- and container-level security contexts. The defaults satisfy the "Restricted"
+# Pod Security Standard, so the chart deploys cleanly into a namespace labelled
+# pod-security.kubernetes.io/enforce=restricted.
+# https://kubernetes.io/docs/concepts/security/pod-security-standards/
+# fsGroup lets the non-root user write to the RWX reports volume (CronJob writes, web reads).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+reports:
+  pvc:
+    # Must be a ReadWriteMany-capable storage class (CronJob writes, web reads).
+    storageClassName: ""
+    size: 1Gi
+    accessModes:
+      - ReadWriteMany
+
+service:
+  port: 80
+
+# Gateway API HTTPRoute (not Ingress).
+httproute:
+  enabled: true
+  parentRefs:
+    - name: nectar-gateway
+      # namespace: gateway-system
+  hostnames: []
+
+# Restrict the CronJob's egress. It reaches PuppetDB plus the git host (the git-sync init
+# container clones the checks repo). The web pod is not selected by this policy.
+networkPolicy:
+  enabled: false
+  puppetdb:
+    cidrs: []
+    ports:
+      - 8080
+  # Egress to the nectar-conformance-checks git host. Set cidrs to the gerrit host(s); the
+  # port is 443 for HTTPS clones, 29418 for gerrit SSH (match checks.git.repo).
+  checksGit:
+    cidrs: []
+    ports:
+      - 443
+
+resources:
+  web:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  refresh:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+# Extra keys merged into config.yaml at its root (e.g. site_environment overrides).
+extraConfig: {}
+
+nameOverride: ""
+fullnameOverride: ""

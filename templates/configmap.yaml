@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ncw.fullname" . }}-config
+  labels:
+    {{- include "ncw.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    source: puppetdb
+    puppetdb:
+      base_url: {{ required "puppetdb.baseUrl is required" .Values.puppetdb.baseUrl | quote }}
+    # Sites this deployment evaluates, keyed by its tier. An empty list means "discover every
+    # environment from PuppetDB"; a non-empty list restricts evaluation to exactly those sites.
+    sites:
+      {{ .Values.tier }}:
+        {{- toYaml .Values.sites | nindent 8 }}
+    {{- with .Values.extraConfig }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
