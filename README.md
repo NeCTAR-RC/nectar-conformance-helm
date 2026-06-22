@@ -7,9 +7,10 @@ ReadWriteMany (RWX) volume, and a web Deployment serves them.
 ## Conformance check data
 
 The check definitions and conformance changelog are **not** baked into the image. They live
-in the [`nectar-conformance-checks`](https://review.rc.nectar.org.au) repository and are
-git-synced into a shared `emptyDir` that both pods mount, so the conformance schedule can be
-updated by pushing to that repo, with no image rebuild or chart bump.
+in the private [`nectar-conformance-checks`](https://git.rc.nectar.org.au/internal/nectar-conformance-checks)
+repository on Gitea and are git-synced into a shared `emptyDir` that both pods mount, so the
+conformance schedule can be updated by pushing to that repo, with no image rebuild or chart
+bump.
 
 - The CronJob runs a git-sync **init container** that clones the repo fresh on every run.
 - The web Deployment runs the same init clone plus a git-sync **sidecar** that pulls
@@ -17,12 +18,38 @@ updated by pushing to that repo, with no image rebuild or chart bump.
 - Both pods read `<checks.mountPath>/current` through the `NECTAR_CONFORMANCE_CHECKS_DIR`
   environment variable, which the chart sets for them.
 
-Configure it under `checks.git` in `values.yaml`: `repo` (required), `ref`, `period`,
-`image`, and `secretName` (an SSH deploy key under the key `ssh`; leave empty for anonymous
-HTTPS). When `networkPolicy.enabled` is true, set `networkPolicy.checksGit.cidrs` (and
-`ports`, default 443) to the git host so the clone is allowed. Setting `checks.git.enabled`
-to false drops all of this; you must then supply the checks another way, as the tool has no
-packaged fallback and will not start without a checks directory.
+Configure it under `checks.git` in `values.yaml`: `repo` (required, an SSH URL), `ref`,
+`period`, and `image`.
+
+### Authenticating to the private repo
+
+The repo is private, so git-sync clones over SSH with a read-only **deploy key**. By default
+the key is delivered by the **Vault Agent Injector** (no Kubernetes Secret). Set
+`checks.git.vault`:
+
+- `role` (**required**): the Vault Kubernetes auth role bound to the pods' ServiceAccount.
+- `secretPath` / `secretKey`: the KV v2 path and field holding the private key (default
+  `secret/data/nectar/conformance/checks-deploy-key`, key `ssh`).
+- The agent renders the key to `checks.git.sshKeyFile` (`/vault/secrets/ssh`) and git-sync
+  reads it there. `agent-run-as-same-user` is set so the `0400` key is owned by the workload
+  UID; this relies on `securityContext.runAsUser` (10001) being set, which the chart does.
+
+Operator setup, once: generate a key pair, add the **public** key as a read-only deploy key
+on the Gitea repo, store the **private** key in Vault
+(`vault kv put secret/nectar/conformance/checks-deploy-key ssh=@deploy_key`), and bind the
+Vault role to the pods' ServiceAccount with read on that path. The chart creates a dedicated
+ServiceAccount named after the release (the Helm release name), and both pods run as it.
+
+As a fallback, set `checks.git.vault.enabled` to false and `checks.git.secretName` to an
+existing Secret holding the deploy key under the key `ssh`; the chart then mounts it instead.
+
+When `networkPolicy.enabled` is true, set `networkPolicy.checksGit.cidrs` (port 22 for SSH)
+to the Gitea host and `networkPolicy.vault.cidrs` (port 8200) to the Vault host so the clone
+and the agent's secret fetch are allowed.
+
+Setting `checks.git.enabled` to false drops all of this; you must then supply the checks
+another way, as the tool has no packaged fallback and will not start without a checks
+directory.
 
 ## Sites evaluated
 

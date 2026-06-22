@@ -37,6 +37,19 @@ spec:
         {{- end }}
     {{- end }}
     {{- end }}
+    {{- if (and .Values.checks.git.vault .Values.checks.git.vault.enabled) }}
+    # Egress to Vault so the injected vault-agent-init can fetch the deploy key.
+    {{- range .Values.networkPolicy.vault.cidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        {{- range $.Values.networkPolicy.vault.ports }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+    {{- end }}
     # Allow DNS resolution.
     - ports:
         - protocol: UDP

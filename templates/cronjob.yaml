@@ -17,7 +17,12 @@ spec:
           labels:
             {{- include "ncw.selectorLabels" . | nindent 12 }}
             app.kubernetes.io/component: refresh
+          {{- with (include "ncw.vaultAnnotations" . | trim) }}
+          annotations:
+            {{- . | nindent 12 }}
+          {{- end }}
         spec:
+          serviceAccountName: {{ include "ncw.serviceAccountName" . }}
           restartPolicy: OnFailure
           securityContext:
             {{- toYaml .Values.podSecurityContext | nindent 12 }}

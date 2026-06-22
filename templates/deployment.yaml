@@ -18,7 +18,11 @@ spec:
         app.kubernetes.io/component: web
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with (include "ncw.vaultAnnotations" . | trim) }}
+        {{- . | nindent 8 }}
+        {{- end }}
     spec:
+      serviceAccountName: {{ include "ncw.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       {{- if .Values.checks.git.enabled }}

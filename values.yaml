@@ -34,16 +34,35 @@ checks:
   mountPath: /checks
   git:
     enabled: true
-    # Clone URL for nectar-conformance-checks. REQUIRED when enabled. Anonymous HTTPS is
-    # simplest; for SSH set secretName below to a Secret holding the deploy key under "ssh".
-    repo: "https://review.rc.nectar.org.au/internal/nectar-conformance-checks"
+    # Clone URL for nectar-conformance-checks. REQUIRED when enabled. The repo is private, so
+    # this is an SSH URL and an SSH deploy key must be supplied (Vault injection by default;
+    # see vault below).
+    repo: "git@git.rc.nectar.org.au:internal/nectar-conformance-checks.git"
     ref: master
     depth: 1
     # Web sidecar pull interval (the CronJob init clone ignores this; it runs once).
     period: 1m
     maxFailures: 3
     image: registry.k8s.io/git-sync/git-sync:v4.4.0
-    # Optional Secret with an SSH deploy key (key "ssh"); leave empty for anonymous HTTPS.
+    # Path git-sync reads the SSH private key from. With Vault injection (below) the Vault
+    # Agent renders the key here, under the shared /vault/secrets mount.
+    sshKeyFile: /vault/secrets/ssh
+    # Deliver the SSH deploy key with the Vault Agent Injector (no Kubernetes Secret). The
+    # agent renders the private key into the pod at sshKeyFile, and git-sync reads it there.
+    vault:
+      enabled: true
+      # Vault Kubernetes auth role bound to the pods' ServiceAccount. REQUIRED when enabled.
+      role: "k8s"
+      # KV v2 path holding the deploy key (note the /data/ segment), and the field within it.
+      secretPath: "secret/data/k8s/nectar-conformance/nectar-conformance/checks-deploy-key"
+      secretKey: ssh
+      # Optional: override the rendered Vault Agent template (defaults to a KV v2 read of
+      # secretKey at secretPath). Set this if your secret's shape is non-standard.
+      template: ""
+      # Optional: extra vault.hashicorp.com/* annotations merged onto both pods.
+      annotations: {}
+    # Fallback: mount an existing Kubernetes Secret holding the deploy key under key "ssh"
+    # instead of using Vault. Leave empty when vault.enabled is true.
     secretName: ""
     resources:
       requests:
@@ -75,6 +94,9 @@ podSecurityContext:
     type: RuntimeDefault
 
 securityContext:
+  # runAsUser is set explicitly here (matching podSecurityContext) so the Vault Agent
+  # Injector's agent-run-as-same-user can read the UID from the first app container.
+  runAsUser: 10001
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
   capabilities:
@@ -108,12 +130,18 @@ networkPolicy:
     cidrs: []
     ports:
       - 8080
-  # Egress to the nectar-conformance-checks git host. Set cidrs to the gerrit host(s); the
-  # port is 443 for HTTPS clones, 29418 for gerrit SSH (match checks.git.repo).
+  # Egress to the nectar-conformance-checks git host. Set cidrs to the Gitea host(s); the
+  # port is 22 for SSH clones (match checks.git.repo).
   checksGit:
     cidrs: []
     ports:
-      - 443
+      - 22
+  # Egress to Vault so the injected vault-agent-init can fetch the deploy key. Set cidrs to
+  # the Vault host(s); port is 8200 by default (use 443 if Vault is fronted by TLS on 443).
+  vault:
+    cidrs: []
+    ports:
+      - 8200
 
 resources:
   web:

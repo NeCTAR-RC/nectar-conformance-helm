@@ -14,6 +14,11 @@
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{/* The ServiceAccount both pods run as: the release name (the Vault auth role binds to it). */}}
+{{- define "ncw.serviceAccountName" -}}
+{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "ncw.labels" -}}
 helm.sh/chart: {{ include "ncw.chart" . }}
 {{ include "ncw.selectorLabels" . }}
@@ -44,6 +49,8 @@ oneTime=true is an init container (clone once, exit); false is a sidecar (period
 {{- define "ncw.gitsync" -}}
 {{- $ctx := .ctx -}}
 {{- $git := $ctx.Values.checks.git -}}
+{{- $vaultEnabled := and $git.vault $git.vault.enabled -}}
+{{- $ssh := or $vaultEnabled $git.secretName -}}
 - name: {{ .name }}
   image: {{ $git.image }}
   imagePullPolicy: {{ $ctx.Values.image.pullPolicy }}
@@ -61,15 +68,15 @@ oneTime=true is an init container (clone once, exit); false is a sidecar (period
     {{- else }}
     - --period={{ $git.period | default "1m" }}
     {{- end }}
-    {{- if $git.secretName }}
+    {{- if $ssh }}
     - --ssh
-    - --ssh-key-file=/etc/git-secret/ssh
+    - --ssh-key-file={{ if $vaultEnabled }}{{ $git.sshKeyFile | default "/vault/secrets/ssh" }}{{ else }}/etc/git-secret/ssh{{ end }}
     - --ssh-known-hosts=false
     {{- end }}
   volumeMounts:
     - name: checks
       mountPath: {{ $ctx.Values.checks.mountPath }}
-    {{- if $git.secretName }}
+    {{- if and $git.secretName (not $vaultEnabled) }}
     - name: git-secret
       mountPath: /etc/git-secret
       readOnly: true
@@ -86,11 +93,48 @@ Call with the root context ($). Renders nothing when checks.git is disabled.
 {{- if .Values.checks.git.enabled }}
 - name: checks
   emptyDir: {}
-{{- if .Values.checks.git.secretName }}
+{{- if and .Values.checks.git.secretName (not (and .Values.checks.git.vault .Values.checks.git.vault.enabled)) }}
 - name: git-secret
   secret:
     secretName: {{ .Values.checks.git.secretName }}
     defaultMode: 0400
 {{- end }}
 {{- end }}
+{{- end -}}
+
+{{/*
+Vault Agent Injector annotations for the pods that git-sync the checks repo, so the SSH
+deploy key is injected at checks.git.sshKeyFile. Call with the root context ($). Renders
+nothing unless checks.git.vault.enabled. agent-run-as-same-user makes the agent run as the
+workload UID (set in securityContext.runAsUser) so the 0400 key is readable by git-sync;
+agent-pre-populate-only injects only an init container (the key is static).
+*/}}
+{{- define "ncw.vaultAnnotations" -}}
+{{- $git := .Values.checks.git -}}
+{{- if and $git.enabled $git.vault $git.vault.enabled }}
+vault.hashicorp.com/agent-inject: "true"
+vault.hashicorp.com/agent-pre-populate-only: "true"
+vault.hashicorp.com/agent-run-as-same-user: "true"
+vault.hashicorp.com/role: {{ required "checks.git.vault.role is required when checks.git.vault.enabled" $git.vault.role | quote }}
+vault.hashicorp.com/agent-inject-secret-ssh: {{ $git.vault.secretPath | quote }}
+vault.hashicorp.com/agent-inject-perms-ssh: "0400"
+vault.hashicorp.com/agent-inject-template-ssh: {{ include "ncw.vaultSshTemplate" . | quote }}
+{{- with $git.vault.annotations }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{/*
+The Vault Agent template that renders the raw SSH private key. Defaults to a KV v2 read of
+secretKey at secretPath; override with checks.git.vault.template. The literal {{ }} below are
+emitted verbatim for the agent (consul-template), not evaluated by Helm.
+*/}}
+{{- define "ncw.vaultSshTemplate" -}}
+{{- $v := .Values.checks.git.vault -}}
+{{- if $v.template -}}
+{{ $v.template }}
+{{- else -}}
+{{ printf "{{ with secret %q }}{{ .Data.data.%s }}{{ end }}" $v.secretPath $v.secretKey }}
+{{- end -}}
 {{- end -}}
