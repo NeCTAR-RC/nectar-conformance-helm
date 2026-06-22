@@ -76,6 +76,10 @@ oneTime=true is an init container (clone once, exit); false is a sidecar (period
   volumeMounts:
     - name: checks
       mountPath: {{ $ctx.Values.checks.mountPath }}
+    # git-sync writes temporary git data to /tmp, which the read-only root filesystem
+    # (securityContext.readOnlyRootFilesystem) would otherwise forbid.
+    - name: git-tmp
+      mountPath: /tmp
     {{- if and $git.secretName (not $vaultEnabled) }}
     - name: git-secret
       mountPath: /etc/git-secret
@@ -92,6 +96,8 @@ Call with the root context ($). Renders nothing when checks.git is disabled.
 {{- define "ncw.checksVolumes" -}}
 {{- if .Values.checks.git.enabled }}
 - name: checks
+  emptyDir: {}
+- name: git-tmp
   emptyDir: {}
 {{- if and .Values.checks.git.secretName (not (and .Values.checks.git.vault .Values.checks.git.vault.enabled)) }}
 - name: git-secret
