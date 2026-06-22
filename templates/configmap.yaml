@@ -17,3 +17,18 @@ data:
     {{- with .Values.extraConfig }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+{{- if include "ncw.gitSshEnabled" . }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ncw.fullname" . }}-git-sync-passwd
+  labels:
+    {{- include "ncw.labels" . | nindent 4 }}
+data:
+  # A minimal /etc/passwd entry for the workload UID so SSH's getpwuid() succeeds when git-sync
+  # runs as securityContext.runAsUser (a UID absent from the git-sync image's /etc/passwd). Home
+  # is /tmp (the writable tmp volume); shell is nologin since git-sync never starts a shell.
+  passwd: |
+    git-sync:x:{{ .Values.securityContext.runAsUser }}:{{ .Values.podSecurityContext.runAsGroup | default .Values.securityContext.runAsUser }}:git-sync:/tmp:/sbin/nologin
+{{- end }}

@@ -42,6 +42,15 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{/*
+Truthy (non-empty string) when git-sync authenticates over SSH: either a Vault-injected
+deploy key or a mounted Kubernetes Secret. Call with the root context ($).
+*/}}
+{{- define "ncw.gitSshEnabled" -}}
+{{- $git := .Values.checks.git -}}
+{{- if and $git.enabled (or (and $git.vault $git.vault.enabled) $git.secretName) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
 A git-sync container that clones the checks repo into the shared "checks" volume.
 Call with a dict: (dict "ctx" $ "name" "git-sync-init" "oneTime" true).
 oneTime=true is an init container (clone once, exit); false is a sidecar (periodic pull).
@@ -56,6 +65,12 @@ oneTime=true is an init container (clone once, exit); false is a sidecar (period
   imagePullPolicy: {{ $ctx.Values.image.pullPolicy }}
   securityContext:
     {{- toYaml $ctx.Values.securityContext | nindent 4 }}
+  {{- if $ssh }}
+  env:
+    # SSH and git resolve $HOME; point it at the writable tmp volume (the read-only root has none).
+    - name: HOME
+      value: /tmp
+  {{- end }}
   args:
     - --repo={{ required "checks.git.repo is required when checks.git.enabled" $git.repo }}
     - --ref={{ $git.ref | default "master" }}
@@ -80,6 +95,16 @@ oneTime=true is an init container (clone once, exit); false is a sidecar (period
     # (securityContext.readOnlyRootFilesystem) would otherwise forbid.
     - name: git-tmp
       mountPath: /tmp
+    {{- if $ssh }}
+    # SSH resolves the current UID via getpwuid(); the git-sync image has no /etc/passwd entry
+    # for securityContext.runAsUser, so ssh aborts with "No user exists for uid <uid>". Mount an
+    # entry for it. A mounted file works under readOnlyRootFilesystem; git-sync's --add-user
+    # would instead need a writable /etc/passwd, which the read-only root forbids.
+    - name: git-sync-passwd
+      mountPath: /etc/passwd
+      subPath: passwd
+      readOnly: true
+    {{- end }}
     {{- if and $git.secretName (not $vaultEnabled) }}
     - name: git-secret
       mountPath: /etc/git-secret
@@ -99,6 +124,11 @@ Call with the root context ($). Renders nothing when checks.git is disabled.
   emptyDir: {}
 - name: git-tmp
   emptyDir: {}
+{{- if include "ncw.gitSshEnabled" . }}
+- name: git-sync-passwd
+  configMap:
+    name: {{ include "ncw.fullname" . }}-git-sync-passwd
+{{- end }}
 {{- if and .Values.checks.git.secretName (not (and .Values.checks.git.vault .Values.checks.git.vault.enabled)) }}
 - name: git-secret
   secret:
