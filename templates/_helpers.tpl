@@ -113,13 +113,16 @@ Vault Agent Injector annotations for the pods that git-sync the checks repo, so 
 deploy key is injected at checks.git.sshKeyFile. Call with the root context ($). Renders
 nothing unless checks.git.vault.enabled. agent-run-as-same-user makes the agent run as the
 workload UID (set in securityContext.runAsUser) so the 0400 key is readable by git-sync;
-agent-pre-populate-only injects only an init container (the key is static).
+agent-pre-populate-only injects only an init container (the key is static);
+agent-init-first runs that init container before git-sync-init, so the key is rendered
+before git-sync tries to read it (otherwise git-sync-init runs first and fails).
 */}}
 {{- define "ncw.vaultAnnotations" -}}
 {{- $git := .Values.checks.git -}}
 {{- if and $git.enabled $git.vault $git.vault.enabled }}
 vault.hashicorp.com/agent-inject: "true"
 vault.hashicorp.com/agent-pre-populate-only: "true"
+vault.hashicorp.com/agent-init-first: "true"
 vault.hashicorp.com/agent-run-as-same-user: "true"
 vault.hashicorp.com/role: {{ required "checks.git.vault.role is required when checks.git.vault.enabled" $git.vault.role | quote }}
 vault.hashicorp.com/agent-inject-secret-ssh: {{ $git.vault.secretPath | quote }}
