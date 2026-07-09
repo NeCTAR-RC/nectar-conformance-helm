@@ -84,7 +84,6 @@ oneTime=true is an init container (clone once, exit); false is a sidecar (period
     - --period={{ $git.period | default "1m" }}
     {{- end }}
     {{- if $ssh }}
-    - --ssh
     - --ssh-key-file={{ if $vaultEnabled }}{{ $git.sshKeyFile | default "/vault/secrets/ssh" }}{{ else }}/etc/git-secret/ssh{{ end }}
     - --ssh-known-hosts=false
     {{- end }}
